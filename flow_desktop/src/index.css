@@ -1,0 +1,144 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --flow-app-bg: #F4F3EE;
+  --flow-panel-bg: #FAFAF8;
+  --flow-surface: #FFFFFF;
+  --flow-surface-muted: #F6F5F0;
+  --flow-surface-hover: #F5F4EE;
+  --flow-nav-active: #ECEAE4;
+  --flow-border: #E8E6E0;
+  --flow-border-subtle: #EFECE6;
+  --flow-text: #1C1C1C;
+  --flow-text-secondary: #5C5954;
+  --flow-text-muted: #848079;
+  --flow-primary-btn: #1A1A1A;
+  --flow-primary-btn-hover: #2E2E2E;
+  --flow-primary-btn-text: #FFFFFF;
+  --flow-accent: #7C4DDB;
+  --flow-accent-soft: #EFE8FC;
+  --flow-chip-filler-bg: #E6E0FB;
+  --flow-chip-filler-text: #5B3FD6;
+  --flow-chip-correction-bg: #FDE3D3;
+  --flow-chip-correction-text: #C4571C;
+  --flow-keycap-bg: #F49D4D;
+  --flow-keycap-border: #2A2520;
+  --flow-keycap-text: #1C1C1C;
+  --flow-style-bubble-bg: #FAF7FD;
+  --flow-panel-shadow: 0 2px 14px rgba(28, 25, 20, 0.045), 0 0 0 1px rgba(232, 230, 224, 0.75);
+}
+
+.dark {
+  --flow-app-bg: #121211;
+  --flow-panel-bg: #191917;
+  --flow-surface: #20201D;
+  --flow-surface-muted: #242420;
+  --flow-surface-hover: #292925;
+  --flow-nav-active: #272723;
+  --flow-border: #2F2E2A;
+  --flow-border-subtle: #2A2925;
+  --flow-text: #F2F1EC;
+  --flow-text-secondary: #B4B0A8;
+  --flow-text-muted: #86827A;
+  --flow-primary-btn: #F2F1EC;
+  --flow-primary-btn-hover: #E0DFD8;
+  --flow-primary-btn-text: #161614;
+  --flow-accent: #9B74F2;
+  --flow-accent-soft: #2D2345;
+  --flow-chip-filler-bg: #2D2349;
+  --flow-chip-filler-text: #C7B5FB;
+  --flow-chip-correction-bg: #3D2518;
+  --flow-chip-correction-text: #F6A87B;
+  --flow-keycap-bg: #E68A3E;
+  --flow-keycap-border: #F5CBA3;
+  --flow-keycap-text: #181411;
+  --flow-style-bubble-bg: #25212E;
+  --flow-panel-shadow: 0 4px 20px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(47, 46, 42, 0.9);
+}
+
+@layer base {
+  html,
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--flow-app-bg);
+    color: var(--flow-text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body.overlay-transparent,
+  html.overlay-transparent {
+    background: transparent !important;
+    overflow: hidden;
+  }
+}
+
+.font-serif-display {
+  font-family: 'Lora', Georgia, 'Times New Roman', serif;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Warm Wispr Flow banners matching the attached screenshots */
+.banner-dictation {
+  background:
+    radial-gradient(ellipse 60% 90% at 15% 40%, rgba(28, 86, 102, 0.88), transparent 72%),
+    radial-gradient(ellipse 55% 95% at 52% 45%, rgba(212, 138, 62, 0.72), transparent 68%),
+    radial-gradient(ellipse 48% 100% at 88% 55%, rgba(164, 62, 34, 0.88), transparent 74%),
+    linear-gradient(115deg, #16313E 0%, #244C5C 36%, #8C512B 70%, #3E1A12 100%);
+}
+
+.banner-dictionary {
+  background:
+    radial-gradient(ellipse 55% 85% at 80% 48%, rgba(184, 105, 58, 0.85), transparent 70%),
+    radial-gradient(ellipse 50% 80% at 35% 25%, rgba(112, 68, 42, 0.65), transparent 65%),
+    radial-gradient(ellipse 45% 90% at 12% 75%, rgba(62, 36, 26, 0.92), transparent 70%),
+    linear-gradient(125deg, #271B17 0%, #4A2A1C 45%, #8D4F2B 80%, #57311D 100%);
+}
+
+.banner-style {
+  background:
+    radial-gradient(ellipse 55% 90% at 22% 50%, rgba(68, 82, 74, 0.78), transparent 70%),
+    radial-gradient(ellipse 48% 95% at 62% 35%, rgba(92, 66, 52, 0.72), transparent 68%),
+    radial-gradient(ellipse 45% 85% at 88% 65%, rgba(58, 72, 56, 0.82), transparent 72%),
+    linear-gradient(120deg, #2B2420 0%, #39403C 42%, #473A32 72%, #2F332C 100%);
+}
+
+@keyframes flow-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.flow-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.14) 25%,
+    rgba(255, 255, 255, 0.48) 50%,
+    rgba(255, 255, 255, 0.14) 75%
+  );
+  background-size: 200% 100%;
+  animation: flow-shimmer 1.3s ease-in-out infinite;
+}
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(132, 128, 121, 0.25);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(132, 128, 121, 0.42);
+}

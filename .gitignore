@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+flow_desktop/node_modules/
+
+# Python Virtual Environments & Cache
+server/.venv/
+.venv/
+**/__pycache__/
+*.py[cod]
+
+# Reference Repositories
+openwhispr_ref/
+
+# Build Outputs & Bundles
+flow_desktop/dist/
+dist/
+build/
+.aistudio/
+
+# Runtime Logs & Temporary Files
+server.log
+*.log
+/tmp/
+*.sqlite
+*.sqlite3
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

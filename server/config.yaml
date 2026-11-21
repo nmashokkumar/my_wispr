@@ -1,0 +1,20 @@
+server:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins: ["*"]
+  api_key: "" # Leave empty for private/LAN mode, or set a secure token
+
+asr:
+  engine: "faster-whisper" # options: "faster-whisper", "sherpa-onnx"
+  model_name: "distil-large-v3" # Fast, high accuracy for ARM64 and x86_64
+  device: "auto" # "cpu" or "cuda"
+  compute_type: "int8" # optimal for ARM64 / Ampere A1 and standard CPU
+  beam_size: 5
+  language: "en"
+
+llm_refiner:
+  enabled: true
+  provider: "heuristic" # "heuristic" (zero-latency regex/rules) or "openai_compatible"
+  api_base: ""
+  api_key: ""
+  model: ""
