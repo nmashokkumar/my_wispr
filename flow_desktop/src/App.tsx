@@ -15,7 +15,13 @@ function isOverlayPathname(): boolean {
   if (typeof window === 'undefined') return false;
   const path = window.location.pathname.replace(/\/+$/, '');
   const hash = window.location.hash;
-  return path === '/overlay' || hash.includes('/overlay') || hash.includes('overlay');
+  const search = window.location.search;
+  return (
+    path === '/overlay' ||
+    hash.includes('/overlay') ||
+    hash.includes('overlay') ||
+    search.includes('overlay')
+  );
 }
 
 export default function App() {

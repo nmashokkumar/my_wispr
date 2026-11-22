@@ -7,6 +7,7 @@ const { GnomeShortcutManager, bindingToAccelerator } = require('./gnomeShortcut.
 // Linux sandbox switches to prevent SUID sandbox errors in local dev
 app.commandLine.appendSwitch('no-sandbox');
 app.commandLine.appendSwitch('disable-gpu-sandbox');
+app.commandLine.appendSwitch('allow-file-access-from-files');
 
 let mainWindow = null;
 let overlayWindow = null;
@@ -17,6 +18,56 @@ let gnomeManager = null;
 // Active registered accelerators
 let activePttAccelerator = null;
 let activeHfAccelerator = null;
+
+// Robust content loader: connects to Vite dev server if active, with instant fallback to production bundle
+async function loadWindowContent(win, hash = '') {
+  const distIndex = path.join(__dirname, '..', 'dist', 'index.html');
+  const targetHash = hash ? (hash.startsWith('/') ? hash.slice(1) : hash) : '';
+  const devUrl = `http://127.0.0.1:3000${targetHash ? '#/' + targetHash : ''}`;
+
+  // Check if local Vite dev server is responding
+  let isDevRunning = false;
+  try {
+    const http = require('http');
+    isDevRunning = await new Promise((resolve) => {
+      const req = http.get('http://127.0.0.1:3000', { timeout: 800 }, (res) => {
+        resolve(res.statusCode >= 200 && res.statusCode < 400);
+      });
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+  } catch {
+    isDevRunning = false;
+  }
+
+  if (isDevRunning) {
+    console.log(`[Flow Daemon] Connecting window to Vite dev server: ${devUrl}`);
+    try {
+      await win.loadURL(devUrl);
+      return;
+    } catch (err) {
+      console.warn(`[Flow Daemon] Failed to load Vite dev URL (${err.message}), falling back to built bundle.`);
+    }
+  }
+
+  // Load production bundle directly via file://
+  if (fs.existsSync(distIndex)) {
+    console.log(`[Flow Daemon] Loading local bundle: ${distIndex}${targetHash ? ' hash=/' + targetHash : ''}`);
+    const loadOptions = targetHash
+      ? { hash: '/' + targetHash, query: { overlay: 'true' } }
+      : {};
+    try {
+      await win.loadFile(distIndex, loadOptions);
+    } catch (err) {
+      console.error(`[Flow Daemon] Failed to load bundle: ${err.message}`);
+    }
+  } else {
+    console.error(`[Flow Daemon] Production bundle not found at: ${distIndex}. Please run 'npm run build'.`);
+  }
+}
 
 // Determine socket path for ydotool daemon
 function getYdotoolSocket() {
@@ -78,6 +129,8 @@ function createMainWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
+      webSecurity: false,
+      allowRunningInsecureContent: true,
     },
   });
 
@@ -86,7 +139,7 @@ function createMainWindow() {
   });
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`[MainWindow Load Error] ${errorCode} (${errorDescription}) on ${validatedURL}`);
-    if (validatedURL && validatedURL.includes('localhost:3000')) {
+    if (validatedURL && (validatedURL.includes('127.0.0.1:3000') || validatedURL.includes('localhost:3000'))) {
       const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
       if (fs.existsSync(indexPath)) {
         console.log('[MainWindow] Falling back to local built bundle:', indexPath);
@@ -95,14 +148,7 @@ function createMainWindow() {
     }
   });
 
-  const devUrl = 'http://localhost:3000';
-  mainWindow.loadURL(devUrl).catch(() => {
-    // Fallback to built dist if Vite dev server is not active
-    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
-    if (fs.existsSync(indexPath)) {
-      mainWindow.loadFile(indexPath);
-    }
-  });
+  loadWindowContent(mainWindow);
 
   mainWindow.on('close', (e) => {
     if (!isQuitting) {
@@ -134,6 +180,8 @@ function createOverlayWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
+      webSecurity: false,
+      allowRunningInsecureContent: true,
     },
   });
 
@@ -148,7 +196,7 @@ function createOverlayWindow() {
   });
   overlayWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`[Overlay Load Error] ${errorCode} (${errorDescription}) on ${validatedURL}`);
-    if (validatedURL && validatedURL.includes('localhost:3000')) {
+    if (validatedURL && (validatedURL.includes('127.0.0.1:3000') || validatedURL.includes('localhost:3000'))) {
       const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
       if (fs.existsSync(indexPath)) {
         console.log('[Overlay] Falling back to local built bundle:', indexPath);
@@ -157,13 +205,7 @@ function createOverlayWindow() {
     }
   });
 
-  const devOverlayUrl = 'http://localhost:3000/#/overlay';
-  overlayWindow.loadURL(devOverlayUrl).catch(() => {
-    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
-    if (fs.existsSync(indexPath)) {
-      overlayWindow.loadFile(indexPath, { hash: '/overlay' });
-    }
-  });
+  loadWindowContent(overlayWindow, 'overlay');
 
   overlayWindow.on('closed', () => {
     overlayWindow = null;
