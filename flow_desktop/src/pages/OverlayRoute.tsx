@@ -24,16 +24,27 @@ export function OverlayRoute() {
   }, []);
 
   // Sync window visibility with Electron main process
+  // Keep overlay window hidden when idle, popping up only during dictation lifecycle
   useEffect(() => {
     if (typeof window === 'undefined' || !window.electronAPI) return;
 
     if (overlayState === 'listening' || overlayState === 'transcribing') {
       window.electronAPI.showOverlay();
     } else if (overlayState === 'done') {
+      // Allow user to click through cleanly while the "Inserted" checkmark is shown
+      window.electronAPI.setIgnoreMouseEvents?.(true, { forward: true });
+      // When dictation finishes, hide the overlay cleanly after the checkmark
       const timer = setTimeout(() => {
         window.electronAPI?.hideOverlay();
-      }, 1200);
+        if (useFlowStore.getState().overlayState === 'done') {
+          useFlowStore.setState({ overlayState: 'idle' });
+        }
+      }, 1000);
       return () => clearTimeout(timer);
+    } else if (overlayState === 'idle') {
+      window.electronAPI.hideOverlay();
+    } else if (overlayState === 'error') {
+      window.electronAPI.showOverlay();
     }
   }, [overlayState]);
 

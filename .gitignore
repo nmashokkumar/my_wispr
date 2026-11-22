@@ -1,9 +1,13 @@
 # Dependencies
+node_modules
 node_modules/
+flow_desktop/node_modules
 flow_desktop/node_modules/
 
 # Python Virtual Environments & Cache
+server/.venv
 server/.venv/
+.venv
 .venv/
 **/__pycache__/
 *.py[cod]

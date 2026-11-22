@@ -2,6 +2,7 @@ const path = require('path');
 const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, clipboard } = require('electron');
 const { spawnSync } = require('child_process');
 const fs = require('fs');
+const { GnomeShortcutManager, bindingToAccelerator } = require('./gnomeShortcut.cjs');
 
 // Linux sandbox switches to prevent SUID sandbox errors in local dev
 app.commandLine.appendSwitch('no-sandbox');
@@ -11,6 +12,7 @@ let mainWindow = null;
 let overlayWindow = null;
 let tray = null;
 let isQuitting = false;
+let gnomeManager = null;
 
 // Active registered accelerators
 let activePttAccelerator = null;
@@ -22,7 +24,7 @@ function getYdotoolSocket() {
   const candidates = [
     process.env.YDOTOOL_SOCKET,
     uid !== null ? `/run/user/${uid}/.ydotool_socket` : null,
-    '/tmp/.ydotool_socket'
+    '/tmp/.ydotool_socket',
   ].filter(Boolean);
 
   for (const sock of candidates) {
@@ -36,45 +38,19 @@ function getYdotoolSocket() {
   return null;
 }
 
-// Convert user HotkeyBinding from React into an Electron global accelerator string
-function bindingToAccelerator(binding) {
-  if (!binding || typeof binding !== 'object') return null;
-
-  const code = binding.code || '';
-  const parts = [];
-
-  // Handle modifiers
-  if (binding.ctrl) parts.push('Control');
-  if (binding.alt) parts.push('Alt');
-  if (binding.shift) parts.push('Shift');
-  if (binding.meta) parts.push('Super');
-
-  // Handle key code
-  let key = code;
-  if (key.startsWith('Key')) key = key.slice(3);
-  else if (key.startsWith('Digit')) key = key.slice(5);
-  else if (key === 'Space') key = 'Space';
-  else if (key === 'Fn' || key === 'WakeUp') {
-    // Solo Fn key is handled by mapping to a standard default accelerator on Linux desktop
-    return parts.length > 0 ? [...parts, 'Space'].join('+') : 'Control+Space';
-  } else if (/^(Control|Alt|Shift|Meta)(Left|Right)?$/.test(key)) {
-    // Solo modifier key press
-    return 'Control+Space';
+// Trigger dictation across overlay and main windows
+function triggerDictation(mode = 'hands_free') {
+  console.log(`[Flow Daemon] Dictation triggered globally: mode=${mode}`);
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.showInactive();
+    overlayWindow.webContents.send('dictation-trigger', { mode });
   }
-
-  // If key wasn't empty, append it
-  if (key && !parts.includes(key)) {
-    parts.push(key);
-  }
-
-  if (parts.length === 0) return null;
-  return parts.join('+');
 }
 
 // Fixed center-bottom position higher than the Ubuntu dock / taskbar
 function getOverlayBounds(width = 240, height = 56) {
   const primaryDisplay = screen.getPrimaryDisplay();
-  const { bounds, workArea } = primaryDisplay;
+  const { bounds } = primaryDisplay;
 
   // Horizontal center
   const x = Math.round(bounds.x + (bounds.width - width) / 2);
@@ -217,10 +193,7 @@ function createTray() {
     {
       label: 'Toggle Dictation (Hands-Free)',
       click: () => {
-        if (overlayWindow && !overlayWindow.isDestroyed()) {
-          overlayWindow.showInactive();
-          overlayWindow.webContents.send('dictation-trigger', { mode: 'hands_free' });
-        }
+        triggerDictation('hands_free');
       },
     },
     { type: 'separator' },
@@ -250,27 +223,28 @@ function createTray() {
 
 // Register global shortcuts
 function registerShortcuts(pttBinding, hfBinding) {
-  // Clear any existing
+  // Clear any existing globalShortcuts
   if (activePttAccelerator) {
-    globalShortcut.unregister(activePttAccelerator);
+    try {
+      globalShortcut.unregister(activePttAccelerator);
+    } catch {}
     activePttAccelerator = null;
   }
   if (activeHfAccelerator) {
-    globalShortcut.unregister(activeHfAccelerator);
+    try {
+      globalShortcut.unregister(activeHfAccelerator);
+    } catch {}
     activeHfAccelerator = null;
   }
 
   const pttAcc = bindingToAccelerator(pttBinding) || 'Control+Space';
   const hfAcc = bindingToAccelerator(hfBinding) || 'Control+Alt+Space';
 
-  // Register Push-to-Talk shortcut
+  // 1. Electron globalShortcut fallback (works in X11 / XWayland)
   try {
     const pttOk = globalShortcut.register(pttAcc, () => {
-      console.log(`[Flow Daemon] Push-to-Talk hotkey triggered: ${pttAcc}`);
-      if (overlayWindow && !overlayWindow.isDestroyed()) {
-        overlayWindow.showInactive();
-        overlayWindow.webContents.send('dictation-trigger', { mode: 'push_to_talk' });
-      }
+      console.log(`[Flow Daemon] Push-to-Talk hotkey triggered (globalShortcut): ${pttAcc}`);
+      triggerDictation('push_to_talk');
     });
     if (pttOk) {
       activePttAccelerator = pttAcc;
@@ -282,14 +256,10 @@ function registerShortcuts(pttBinding, hfBinding) {
     console.error(`[Flow Daemon] Error registering PTT shortcut:`, err);
   }
 
-  // Register Hands-Free shortcut
   try {
     const hfOk = globalShortcut.register(hfAcc, () => {
-      console.log(`[Flow Daemon] Hands-Free hotkey triggered: ${hfAcc}`);
-      if (overlayWindow && !overlayWindow.isDestroyed()) {
-        overlayWindow.showInactive();
-        overlayWindow.webContents.send('dictation-trigger', { mode: 'hands_free' });
-      }
+      console.log(`[Flow Daemon] Hands-Free hotkey triggered (globalShortcut): ${hfAcc}`);
+      triggerDictation('hands_free');
     });
     if (hfOk) {
       activeHfAccelerator = hfAcc;
@@ -301,10 +271,32 @@ function registerShortcuts(pttBinding, hfBinding) {
     console.error(`[Flow Daemon] Error registering Hands-Free shortcut:`, err);
   }
 
+  // 2. Robust GNOME / Ubuntu Wayland registration via gsettings
+  // Intercepted at compositor level so it works anywhere in any application where user can type
+  if (gnomeManager && GnomeShortcutManager.isGnome()) {
+    try {
+      const gnomeHf = GnomeShortcutManager.convertToGnomeFormat(hfAcc);
+      if (gnomeHf) {
+        gnomeManager.registerSlot('hf', gnomeHf);
+      }
+    } catch (err) {
+      console.warn('[Flow Daemon] Failed to register GNOME Hands-Free shortcut:', err);
+    }
+
+    try {
+      const gnomePtt = GnomeShortcutManager.convertToGnomeFormat(pttAcc);
+      if (gnomePtt) {
+        gnomeManager.registerSlot('ptt', gnomePtt);
+      }
+    } catch (err) {
+      console.warn('[Flow Daemon] Failed to register GNOME PTT shortcut:', err);
+    }
+  }
+
   return {
     success: true,
-    pttAcc: activePttAccelerator,
-    hfAcc: activeHfAccelerator,
+    pttAcc: activePttAccelerator || pttAcc,
+    hfAcc: activeHfAccelerator || hfAcc,
   };
 }
 
@@ -425,6 +417,23 @@ if (!gotTheLock) {
     createOverlayWindow();
     createMainWindow();
 
+    // Initialize GNOME / Wayland global shortcuts manager
+    gnomeManager = new GnomeShortcutManager({
+      onDictationTrigger: (mode) => triggerDictation(mode),
+      onShowDashboard: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      },
+      onHideOverlay: () => {
+        if (overlayWindow && !overlayWindow.isDestroyed()) {
+          overlayWindow.hide();
+        }
+      },
+    });
+    gnomeManager.init();
+
     // Default initial hotkeys
     registerShortcuts(
       { code: 'Space', ctrl: true, alt: false, shift: false, meta: false },
@@ -444,6 +453,10 @@ if (!gotTheLock) {
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
+    if (gnomeManager) {
+      gnomeManager.close();
+      gnomeManager = null;
+    }
   });
 
   app.on('window-all-closed', (e) => {

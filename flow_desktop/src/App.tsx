@@ -3,7 +3,6 @@ import { Moon, PanelLeft, Sun } from 'lucide-react';
 import { useFlowStore } from './store/useFlowStore';
 import { hotkeyProvider } from './services/hotkeys';
 import { Sidebar } from './components/Sidebar';
-import { OverlayPill } from './components/OverlayPill';
 import { SettingsModal } from './components/SettingsModal';
 import { ToastStack } from './components/Toast';
 import { DictationPage } from './pages/DictationPage';
@@ -130,9 +129,6 @@ export default function App() {
           {activePage === 'style' && <StylePage />}
         </main>
       </div>
-
-      {/* Floating bottom-center dictation overlay pill */}
-      <OverlayPill />
 
       {/* Settings modal & toasts */}
       <SettingsModal />
