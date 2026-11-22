@@ -1,4 +1,5 @@
-import { Check, X } from 'lucide-react';
+import React from 'react';
+import { Mic, Check, Loader2 } from 'lucide-react';
 import { useFlowStore } from '../store/useFlowStore';
 
 interface OverlayPillProps {
@@ -11,22 +12,10 @@ export function OverlayPill({ standalone = false }: OverlayPillProps) {
   const audioLevels = useFlowStore((s) => s.audioLevels);
   const overlayError = useFlowStore((s) => s.overlayError);
   const dictationMode = useFlowStore((s) => s.settings.dictationMode);
-  const pushToTalkHotkey = useFlowStore((s) => s.settings.pushToTalkHotkey);
-  const handsFreeHotkey = useFlowStore((s) => s.settings.handsFreeHotkey);
 
   const stopDictation = useFlowStore((s) => s.stopDictation);
-  const clearOverlayError = useFlowStore((s) => s.clearOverlayError);
 
-  // Compact hotkey label displayed inside the pill
-  const activeHotkey = dictationMode === 'push_to_talk' ? pushToTalkHotkey : handsFreeHotkey;
-  const hotkeyLabel = activeHotkey.label
-    .replace(/\s*\+\s*/g, '+')
-    .replace(/Control/gi, 'Ctrl')
-    .toLowerCase() === 'fn'
-    ? 'fn'
-    : activeHotkey.label.replace(/\s*\+\s*/g, '+');
-
-  // Interactive mouse bounds for Electron click-through
+  // Interactive mouse bounds for Electron click-through on the tick button
   const handleTickMouseEnter = () => {
     if (typeof window !== 'undefined' && window.electronAPI?.setIgnoreMouseEvents) {
       window.electronAPI.setIgnoreMouseEvents(false);
@@ -47,69 +36,81 @@ export function OverlayPill({ standalone = false }: OverlayPillProps) {
   };
 
   const isHandsFree = dictationMode === 'hands_free';
-  // The pipe "|" and tick button "✓" must appear ONLY in hands-free mode when actively dictating
+  // Pipe "|" and tick "✓" must appear ONLY in Hands-Free mode when actively dictating
   const showHandsFreeTick = isHandsFree && overlayState === 'listening';
 
-  // 1) Remove the static in-page rendering of OverlayPill in DictationPage / dashboard
+  // Standalone check: only renders in /overlay window
   if (!standalone) {
     return null;
   }
 
-  // 2) Keep the overlay hidden when idle: only pops up when dictation is triggered
+  // Keep overlay hidden when idle
   if (overlayState === 'idle') {
     return null;
   }
 
-  // 7 dynamic bars matching the waveform
-  const displayLevels = (audioLevels && audioLevels.length >= 7)
-    ? audioLevels.slice(0, 7)
-    : [0.2, 0.45, 0.3, 0.7, 0.4, 0.55, 0.25];
-
-  const containerClass = standalone
-    ? 'w-full h-full flex items-center justify-center bg-transparent select-none'
-    : 'fixed bottom-24 left-1/2 -translate-x-1/2 z-50 flex items-center justify-center select-none';
+  // Audio levels for animated fluid waveform
+  const levels = audioLevels && audioLevels.length >= 8
+    ? audioLevels.slice(0, 8)
+    : [0.18, 0.35, 0.5, 0.85, 0.65, 0.45, 0.3, 0.2];
 
   return (
-    <div className={containerClass} data-testid="flow-overlay" data-overlay-state={overlayState}>
-      {/* 
-        Deep matte black capsule (#121214):
-        - Non-draggable (fixed at center-bottom)
-        - Left: 7 dynamic waveform bars
-        - Middle: Hotkey badge (e.g. "fn" or "Ctrl+Alt+Space")
-        - In Hands-Free mode when actively dictating: pipe "|" and clickable tick button "✓"
-        - In Push-to-Talk mode: only waveform and hotkey badge
-      */}
+    <div
+      className="w-full h-full flex items-center justify-center bg-transparent select-none"
+      data-testid="flow-overlay"
+      data-overlay-state={overlayState}
+    >
       <div className="flex items-center justify-center pointer-events-auto">
+        {/* LISTENING STATE */}
         {overlayState === 'listening' && (
           <div
-            className="flex items-center gap-2.5 h-[38px] px-3.5 rounded-full bg-[#121214] border border-white/12 shadow-[0_8px_30px_rgba(0,0,0,0.55)] transition-all duration-150 select-none"
-            style={{ minWidth: showHandsFreeTick ? '146px' : '110px' }}
+            className="relative flex items-center gap-2.5 h-[42px] px-4 rounded-full bg-[#121214]/95 border border-white/12 shadow-[0_10px_35px_rgba(0,0,0,0.7)] backdrop-blur-md transition-all duration-200 select-none overflow-hidden"
+            style={{ minWidth: showHandsFreeTick ? '190px' : '150px' }}
           >
-            {/* Dynamic Waveform Bars */}
+            {/* Ambient orange glow behind the pill */}
             <div
-              className="flex items-center gap-[2.5px] h-4 shrink-0"
-              aria-hidden="true"
-            >
-              {displayLevels.map((lvl, idx) => {
-                const heightPx = Math.max(4, Math.min(20, Math.round(lvl * 24)));
-                return (
-                  <span
-                    key={idx}
-                    className="w-[2.5px] rounded-full bg-white transition-[height] duration-75"
-                    style={{ height: `${heightPx}px` }}
-                  />
-                );
-              })}
+              className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-32 h-6 pointer-events-none rounded-full blur-md opacity-70"
+              style={{
+                background: 'radial-gradient(circle, rgba(255,106,0,0.85) 0%, rgba(255,150,0,0.4) 60%, transparent 100%)',
+              }}
+            />
+
+            {/* Left: White Microphone Icon */}
+            <div className="relative z-10 flex items-center justify-center shrink-0">
+              <Mic size={16} strokeWidth={2.4} className="text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]" />
             </div>
 
-            {/* Hotkey Badge (e.g. "fn" or "Ctrl+Alt+Space") */}
-            <span className="text-[12px] font-mono font-medium text-white/90 shrink-0">
-              {hotkeyLabel}
-            </span>
+            {/* Middle: "Listening" Text with Glowing Soundwave Underneath */}
+            <div className="relative z-10 flex flex-col items-center justify-center -space-y-0.5">
+              <span className="text-[12.5px] font-medium tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                Listening
+              </span>
 
-            {/* Hands-Free mode only when actively dictating: pipe "|" and clickable tick button */}
+              {/* Glowing Warm Orange Animated Soundwave */}
+              <div
+                className="flex items-center justify-center gap-[2.5px] h-2.5 w-full pt-0.5"
+                aria-hidden="true"
+              >
+                {levels.map((lvl, idx) => {
+                  const barHeight = Math.max(2.5, Math.min(8.5, Math.round(lvl * 9)));
+                  return (
+                    <span
+                      key={idx}
+                      className="w-[2px] rounded-full transition-[height] duration-75"
+                      style={{
+                        height: `${barHeight}px`,
+                        background: 'linear-gradient(180deg, #FFA500 0%, #FF5500 100%)',
+                        boxShadow: '0 0 5px rgba(255, 106, 0, 0.8)',
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Hands-Free mode only: Pipe "|" and Clickable Tick "✓" button */}
             {showHandsFreeTick && (
-              <>
+              <div className="relative z-10 flex items-center gap-2 pl-0.5 shrink-0">
                 <span className="w-px h-3.5 bg-white/20 shrink-0" aria-hidden="true" />
 
                 <button
@@ -119,54 +120,44 @@ export function OverlayPill({ standalone = false }: OverlayPillProps) {
                   onMouseLeave={handleTickMouseLeave}
                   aria-label="Commit dictation"
                   title="Finish and insert"
-                  className="w-5 h-5 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/15 active:scale-95 transition-all cursor-pointer shrink-0"
+                  className="w-5 h-5 rounded-full flex items-center justify-center text-white/85 hover:text-white hover:bg-white/15 active:scale-95 transition-all cursor-pointer shrink-0"
                 >
-                  <Check size={13} strokeWidth={2.6} />
+                  <Check size={13} strokeWidth={2.8} />
                 </button>
-              </>
+              </div>
             )}
           </div>
         )}
 
-        {/* Transcribing state */}
+        {/* TRANSCRIBING STATE */}
         {overlayState === 'transcribing' && (
-          <div className="flex items-center gap-2 h-[38px] px-4 rounded-full bg-[#121214] border border-white/12 shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-white select-none">
-            <span className="w-3.5 h-3.5 rounded-full border-2 border-white/25 border-t-white animate-spin shrink-0" />
-            <span className="text-[12px] font-medium text-white/90 whitespace-nowrap">
+          <div className="flex items-center gap-2.5 h-[40px] px-4 rounded-full bg-[#121214]/95 border border-white/12 shadow-[0_10px_35px_rgba(0,0,0,0.7)] backdrop-blur-md text-white select-none">
+            <Loader2 size={14} className="text-white animate-spin shrink-0" />
+            <span className="text-[12.5px] font-medium text-white/95 whitespace-nowrap">
               Transcribing…
             </span>
           </div>
         )}
 
-        {/* Done / Inserted state - checkmark display */}
+        {/* DONE / INSERTED STATE */}
         {overlayState === 'done' && (
-          <div className="flex items-center gap-2 h-[38px] px-4 rounded-full bg-[#121214] border border-white/12 shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-white select-none">
-            <span className="flex items-center justify-center w-4 h-4 rounded-full bg-white/15 text-white">
-              <Check size={11} strokeWidth={2.8} />
+          <div className="flex items-center gap-2 h-[40px] px-4 rounded-full bg-[#121214]/95 border border-white/12 shadow-[0_10px_35px_rgba(0,0,0,0.7)] backdrop-blur-md text-white select-none">
+            <span className="flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500/25 text-emerald-400">
+              <Check size={11} strokeWidth={3} />
             </span>
-            <span className="text-[12px] font-medium text-white/90 whitespace-nowrap">
+            <span className="text-[12.5px] font-medium text-white/95 whitespace-nowrap">
               Inserted
             </span>
           </div>
         )}
 
-        {/* Error state */}
+        {/* ERROR STATE */}
         {overlayState === 'error' && (
-          <div className="flex items-center gap-2.5 h-[38px] px-3.5 rounded-full bg-[#121214] border border-red-500/40 shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-white select-none max-w-[280px]">
-            <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-            <span className="text-[11.5px] text-red-200 truncate">
-              {overlayError || 'Transcription failed'}
+          <div className="flex items-center gap-2 h-[40px] px-3.5 rounded-full bg-[#1c1214]/95 border border-red-500/30 shadow-[0_10px_35px_rgba(0,0,0,0.7)] backdrop-blur-md text-white select-none">
+            <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+            <span className="text-[11.5px] font-medium text-red-200/90 max-w-[200px] truncate">
+              {overlayError || 'Dictation failed'}
             </span>
-            <button
-              type="button"
-              onClick={clearOverlayError}
-              onMouseEnter={handleTickMouseEnter}
-              onMouseLeave={handleTickMouseLeave}
-              aria-label="Dismiss error"
-              className="p-0.5 rounded-full text-white/60 hover:text-white cursor-pointer shrink-0"
-            >
-              <X size={12} />
-            </button>
           </div>
         )}
       </div>

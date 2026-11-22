@@ -2,6 +2,21 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true,
+  onDictationStart: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('dictation-start', handler);
+    return () => ipcRenderer.removeListener('dictation-start', handler);
+  },
+  onDictationStop: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('dictation-stop', handler);
+    return () => ipcRenderer.removeListener('dictation-stop', handler);
+  },
+  onDictationToggle: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('dictation-toggle', handler);
+    return () => ipcRenderer.removeListener('dictation-toggle', handler);
+  },
   onDictationTrigger: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('dictation-trigger', handler);

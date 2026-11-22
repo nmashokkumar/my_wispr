@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "electron": "electron --no-sandbox electron/main.cjs",
-    "test": "tsx src/utils/textPipeline.test.ts && tsx src/services/hotkeys.test.ts && tsx tests/electronDaemon.test.ts",
+    "test": "tsx src/utils/textPipeline.test.ts && tsx src/services/hotkeys.test.ts && tsx tests/electronDaemon.test.ts && tsx tests/linuxListenerAndPttLifecycle.test.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"
   },

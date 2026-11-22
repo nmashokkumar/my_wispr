@@ -2,6 +2,8 @@ const path = require('path');
 const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, clipboard, session } = require('electron');
 const { spawnSync } = require('child_process');
 const fs = require('fs');
+const LinuxKeyManager = require('./linuxKeyManager.cjs');
+const GnomeGlobalShortcutsPortal = require('./gnomeGlobalShortcutsPortal.cjs');
 const { GnomeShortcutManager, bindingToAccelerator } = require('./gnomeShortcut.cjs');
 
 // Linux sandbox switches to prevent SUID sandbox errors in local dev
@@ -14,6 +16,8 @@ let overlayWindow = null;
 let tray = null;
 let isQuitting = false;
 let gnomeManager = null;
+let gnomePortal = null;
+let linuxKeyManager = null;
 
 // Active registered accelerators
 let activePttAccelerator = null;
@@ -59,22 +63,18 @@ async function loadWindowContent(win, hash = '') {
     const loadOptions = targetHash
       ? { hash: '/' + targetHash, query: { overlay: 'true' } }
       : {};
-    try {
-      await win.loadFile(distIndex, loadOptions);
-    } catch (err) {
-      console.error(`[Flow Daemon] Failed to load bundle: ${err.message}`);
-    }
+    await win.loadFile(distIndex, loadOptions);
   } else {
-    console.error(`[Flow Daemon] Production bundle not found at: ${distIndex}. Please run 'npm run build'.`);
+    console.error(`[Flow Daemon] ERROR: Neither Vite dev server nor built bundle (${distIndex}) is available.`);
   }
 }
 
-// Determine socket path for ydotool daemon
+// Locate active ydotool socket for Wayland background typing
 function getYdotoolSocket() {
-  const uid = process.getuid ? process.getuid() : null;
   const candidates = [
     process.env.YDOTOOL_SOCKET,
-    uid !== null ? `/run/user/${uid}/.ydotool_socket` : null,
+    '/run/user/' + process.getuid() + '/ydotool_socket',
+    '/run/user/' + process.getuid() + '/.ydotool_socket',
     '/tmp/.ydotool_socket',
   ].filter(Boolean);
 
@@ -89,30 +89,47 @@ function getYdotoolSocket() {
   return null;
 }
 
-// Trigger dictation: routes primarily to overlayWindow, falling back to mainWindow if overlay unavailable
-function triggerDictation(mode = 'hands_free') {
-  console.log(`[Flow Daemon] Dictation triggered globally: mode=${mode}`);
+// Dictation lifecycle triggers
+function handleDictationStart(mode = 'push_to_talk') {
+  console.log(`[Flow Daemon] Dictation START: mode=${mode}`);
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.showInactive();
-    overlayWindow.webContents.send('dictation-trigger', { mode });
+    overlayWindow.webContents.send('dictation-start', { mode });
   } else if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('dictation-trigger', { mode });
+    mainWindow.webContents.send('dictation-start', { mode });
   }
 }
 
-// Fixed center-bottom position higher than the Ubuntu dock / taskbar
-function getOverlayBounds(width = 240, height = 56) {
+function handleDictationStop(mode = 'push_to_talk') {
+  console.log(`[Flow Daemon] Dictation STOP: mode=${mode}`);
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send('dictation-stop', { mode });
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('dictation-stop', { mode });
+  }
+}
+
+function handleDictationToggle(mode = 'hands_free') {
+  console.log(`[Flow Daemon] Dictation TOGGLE: mode=${mode}`);
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.showInactive();
+    overlayWindow.webContents.send('dictation-toggle', { mode });
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('dictation-toggle', { mode });
+  }
+}
+
+// Center-bottom overlay position respecting the Ubuntu dock / workArea
+function getOverlayBounds(width = 240, height = 54) {
   const primaryDisplay = screen.getPrimaryDisplay();
-  const { bounds } = primaryDisplay;
+  const workArea = primaryDisplay.workArea || primaryDisplay.bounds;
 
-  // Horizontal center
-  const x = Math.round(bounds.x + (bounds.width - width) / 2);
+  // Horizontal center within active workArea
+  const x = Math.round(workArea.x + (workArea.width - width) / 2);
 
-  // Position comfortably above the bottom dock:
-  // Ubuntu taskbar/dock is 48-72px, plus hover expansion.
-  // 100px from the bottom edge ensures it is never covered or hidden when opening the dock.
-  const bottomOffset = 100;
-  const y = bounds.y + bounds.height - height - bottomOffset;
+  // 14px margin directly above workArea bottom edge (right above the dock/taskbar)
+  const margin = 14;
+  const y = Math.round(workArea.y + workArea.height - height - margin);
 
   return { x, y, width, height };
 }
@@ -162,7 +179,7 @@ function createMainWindow() {
 
 // Create the floating overlay pill window
 function createOverlayWindow() {
-  const { x, y, width, height } = getOverlayBounds(240, 56);
+  const { x, y, width, height } = getOverlayBounds(240, 54);
 
   overlayWindow = new BrowserWindow({
     x,
@@ -173,17 +190,20 @@ function createOverlayWindow() {
     transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true,
-    focusable: false,
+    focusable: false, // Prevents stealing keyboard cursor/focus from active window!
     resizable: false,
-    movable: false, // User requested: fixed, not draggable!
+    movable: false,
     hasShadow: false,
     show: false,
+    acceptFirstMouse: true,
+    type: 'toolbar', // Wayland / X11 unmanaged toolbar / notification type
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: false,
       allowRunningInsecureContent: true,
+      backgroundThrottling: false, // Prevents animation freezing when unfocused
     },
   });
 
@@ -236,9 +256,11 @@ function createTray() {
     },
     {
       label: 'Toggle Dictation (Hands-Free)',
-      click: () => {
-        triggerDictation('hands_free');
-      },
+      click: () => handleDictationToggle('hands_free'),
+    },
+    {
+      label: 'Toggle Dictation (Push-to-Talk)',
+      click: () => handleDictationToggle('push_to_talk'),
     },
     { type: 'separator' },
     {
@@ -250,7 +272,7 @@ function createTray() {
     },
   ]);
 
-  tray.setToolTip('Wispr Flow - Background Dictation');
+  tray.setToolTip('Wispr Flow — Voice Dictation Daemon');
   tray.setContextMenu(contextMenu);
 
   tray.on('click', () => {
@@ -266,8 +288,10 @@ function createTray() {
 }
 
 // Register global shortcuts
-function registerShortcuts(pttBinding, hfBinding) {
-  // Clear any existing globalShortcuts
+async function registerShortcuts(pttBinding, hfBinding) {
+  console.log('[Flow Daemon] Registering shortcuts:', { ptt: pttBinding, hf: hfBinding });
+
+  // Clear existing accelerators
   if (activePttAccelerator) {
     try {
       globalShortcut.unregister(activePttAccelerator);
@@ -284,39 +308,49 @@ function registerShortcuts(pttBinding, hfBinding) {
   const pttAcc = bindingToAccelerator(pttBinding) || 'Control+Space';
   const hfAcc = bindingToAccelerator(hfBinding) || 'Control+Alt+Space';
 
-  // 1. Electron globalShortcut fallback (works in X11 / XWayland)
-  try {
-    const pttOk = globalShortcut.register(pttAcc, () => {
-      console.log(`[Flow Daemon] Push-to-Talk hotkey triggered (globalShortcut): ${pttAcc}`);
-      triggerDictation('push_to_talk');
-    });
-    if (pttOk) {
-      activePttAccelerator = pttAcc;
-      console.log(`[Flow Daemon] Successfully registered PTT shortcut: ${pttAcc}`);
-    } else {
-      console.warn(`[Flow Daemon] Could not register PTT shortcut: ${pttAcc}`);
+  // 1. Setup Linux low-level evdev key listener (supports RightControl, RightAlt, Fn, etc.)
+  if (linuxKeyManager) {
+    let pttKey = 'RightControl';
+    if (pttBinding && pttBinding.code) {
+      if (pttBinding.code === 'ControlRight') pttKey = 'RightControl';
+      else if (pttBinding.code === 'ControlLeft') pttKey = 'Control';
+      else if (pttBinding.code === 'AltRight') pttKey = 'RightAlt';
+      else if (pttBinding.code === 'AltLeft') pttKey = 'Alt';
+      else if (pttBinding.code === 'ShiftRight') pttKey = 'RightShift';
+      else if (pttBinding.code === 'ShiftLeft') pttKey = 'Shift';
+      else if (pttBinding.code === 'MetaRight') pttKey = 'RightSuper';
+      else if (pttBinding.code === 'Fn' || pttBinding.code === 'WakeUp') pttKey = 'Fn';
+      else pttKey = pttAcc;
     }
-  } catch (err) {
-    console.error(`[Flow Daemon] Error registering PTT shortcut:`, err);
+    linuxKeyManager.setKeys([pttKey]);
   }
 
+  // 2. Setup Gnome Global Shortcuts Portal (Wayland compositor-level key-down and key-up)
+  if (gnomePortal) {
+    try {
+      const portalTrigger = hfAcc.toUpperCase().replace(/\s+/g, '');
+      await gnomePortal.registerKeybinding(portalTrigger, (_hotkey, phase) => {
+        if (phase === 'down') {
+          handleDictationToggle('hands_free');
+        }
+      });
+    } catch (err) {
+      console.log('[Flow Daemon] Global shortcuts portal bind note:', err.message);
+    }
+  }
+
+  // 3. Setup Electron globalShortcut fallback
   try {
     const hfOk = globalShortcut.register(hfAcc, () => {
       console.log(`[Flow Daemon] Hands-Free hotkey triggered (globalShortcut): ${hfAcc}`);
-      triggerDictation('hands_free');
+      handleDictationToggle('hands_free');
     });
-    if (hfOk) {
-      activeHfAccelerator = hfAcc;
-      console.log(`[Flow Daemon] Successfully registered Hands-Free shortcut: ${hfAcc}`);
-    } else {
-      console.warn(`[Flow Daemon] Could not register Hands-Free shortcut: ${hfAcc}`);
-    }
+    if (hfOk) activeHfAccelerator = hfAcc;
   } catch (err) {
-    console.error(`[Flow Daemon] Error registering Hands-Free shortcut:`, err);
+    console.warn('[Flow Daemon] Error registering globalShortcut for HF:', err);
   }
 
-  // 2. Robust GNOME / Ubuntu Wayland registration via gsettings
-  // Intercepted at compositor level so it works anywhere in any application where user can type
+  // 4. Setup GNOME media-keys (gsettings custom-keybinding)
   if (gnomeManager && GnomeShortcutManager.isGnome()) {
     try {
       const gnomeHf = GnomeShortcutManager.convertToGnomeFormat(hfAcc);
@@ -339,8 +373,8 @@ function registerShortcuts(pttBinding, hfBinding) {
 
   return {
     success: true,
-    pttAcc: activePttAccelerator || pttAcc,
-    hfAcc: activeHfAccelerator || hfAcc,
+    pttAcc,
+    hfAcc,
   };
 }
 
@@ -375,7 +409,7 @@ function injectTextIntoActiveWindow(text) {
         const res = spawnSync('ydotool', ['key', '42:1', '110:1', '110:0', '42:0'], { env, timeout: 500 });
         if (res.status === 0) {
           pasted = true;
-          console.log('[Flow Daemon] Injected via ydotool (Shift+Insert)');
+          console.log('[Flow Daemon] Injected via ydotool Shift+Insert');
         }
       } catch (err) {
         console.warn('[Flow Daemon] ydotool key failed:', err);
@@ -475,9 +509,33 @@ if (!gotTheLock) {
     createOverlayWindow();
     createMainWindow();
 
-    // Initialize GNOME / Wayland global shortcuts manager
+    // 1. Initialize Linux evdev low-level key listener
+    linuxKeyManager = new LinuxKeyManager();
+    linuxKeyManager.on('key-down', (key) => {
+      console.log(`[Flow Daemon] Linux low-level key-down: ${key}`);
+      handleDictationStart('push_to_talk');
+    });
+    linuxKeyManager.on('key-up', (key) => {
+      console.log(`[Flow Daemon] Linux low-level key-up: ${key}`);
+      handleDictationStop('push_to_talk');
+    });
+    linuxKeyManager.on('permission-denied', () => {
+      console.log('[Flow Daemon] Note: To enable kernel-level Push-to-Talk (Right Ctrl/Fn), run: sudo usermod -aG input $USER');
+    });
+
+    // 2. Initialize GNOME Wayland Global Shortcuts Portal
+    gnomePortal = new GnomeGlobalShortcutsPortal();
+    gnomePortal.init().catch(() => {});
+
+    // 3. Initialize GNOME custom-keybinding (media-keys) manager
     gnomeManager = new GnomeShortcutManager({
-      onDictationTrigger: (mode) => triggerDictation(mode),
+      onDictationTrigger: (mode) => {
+        if (mode === 'push_to_talk') {
+          handleDictationToggle('push_to_talk');
+        } else {
+          handleDictationToggle('hands_free');
+        }
+      },
       onShowDashboard: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.show();
@@ -494,14 +552,14 @@ if (!gotTheLock) {
 
     // Default initial hotkeys
     registerShortcuts(
-      { code: 'Space', ctrl: true, alt: false, shift: false, meta: false },
+      { code: 'ControlRight', ctrl: false, alt: false, shift: false, meta: false },
       { code: 'Space', ctrl: true, alt: true, shift: false, meta: false }
     );
 
     // Keep overlay positioned correctly if screen resolution / work area changes
     screen.on('display-metrics-changed', () => {
       if (overlayWindow && !overlayWindow.isDestroyed()) {
-        const bounds = getOverlayBounds(240, 56);
+        const bounds = getOverlayBounds(240, 54);
         overlayWindow.setBounds(bounds);
       }
     });
@@ -511,6 +569,14 @@ if (!gotTheLock) {
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
+    if (linuxKeyManager) {
+      linuxKeyManager.stop();
+      linuxKeyManager = null;
+    }
+    if (gnomePortal) {
+      gnomePortal.close().catch(() => {});
+      gnomePortal = null;
+    }
     if (gnomeManager) {
       gnomeManager.close();
       gnomeManager = null;

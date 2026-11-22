@@ -24,22 +24,20 @@ export function OverlayRoute() {
   }, []);
 
   // Sync window visibility with Electron main process
-  // Keep overlay window hidden when idle, popping up only during dictation lifecycle
   useEffect(() => {
     if (typeof window === 'undefined' || !window.electronAPI) return;
 
     if (overlayState === 'listening' || overlayState === 'transcribing') {
       window.electronAPI.showOverlay();
-    } else if (overlayState === 'done') {
-      // Allow user to click through cleanly while the "Inserted" checkmark is shown
       window.electronAPI.setIgnoreMouseEvents?.(true, { forward: true });
-      // When dictation finishes, hide the overlay cleanly after the checkmark
+    } else if (overlayState === 'done') {
+      window.electronAPI.setIgnoreMouseEvents?.(true, { forward: true });
       const timer = setTimeout(() => {
         window.electronAPI?.hideOverlay();
         if (useFlowStore.getState().overlayState === 'done') {
           useFlowStore.setState({ overlayState: 'idle' });
         }
-      }, 1000);
+      }, 1200);
       return () => clearTimeout(timer);
     } else if (overlayState === 'idle') {
       window.electronAPI.hideOverlay();
@@ -48,18 +46,63 @@ export function OverlayRoute() {
     }
   }, [overlayState]);
 
-  // Wire Electron IPC trigger
+  // Wire Electron IPC triggers
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.electronAPI?.onDictationTrigger) return;
+    if (typeof window === 'undefined' || !window.electronAPI) return;
 
-    return window.electronAPI.onDictationTrigger(({ mode }) => {
-      const current = useFlowStore.getState().overlayState;
-      if (current === 'listening') {
-        void stopDictation();
-      } else {
-        void startDictation(mode);
-      }
-    });
+    const unsubs: Array<() => void> = [];
+
+    if (window.electronAPI.onDictationStart) {
+      unsubs.push(
+        window.electronAPI.onDictationStart(({ mode }) => {
+          const current = useFlowStore.getState().overlayState;
+          if (current !== 'listening') {
+            void startDictation(mode);
+          }
+        })
+      );
+    }
+
+    if (window.electronAPI.onDictationStop) {
+      unsubs.push(
+        window.electronAPI.onDictationStop(() => {
+          const current = useFlowStore.getState().overlayState;
+          if (current === 'listening') {
+            void stopDictation();
+          }
+        })
+      );
+    }
+
+    if (window.electronAPI.onDictationToggle) {
+      unsubs.push(
+        window.electronAPI.onDictationToggle(({ mode }) => {
+          const current = useFlowStore.getState().overlayState;
+          if (current === 'listening') {
+            void stopDictation();
+          } else {
+            void startDictation(mode);
+          }
+        })
+      );
+    }
+
+    if (window.electronAPI.onDictationTrigger) {
+      unsubs.push(
+        window.electronAPI.onDictationTrigger(({ mode }) => {
+          const current = useFlowStore.getState().overlayState;
+          if (current === 'listening') {
+            void stopDictation();
+          } else {
+            void startDictation(mode);
+          }
+        })
+      );
+    }
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
   }, [startDictation, stopDictation]);
 
   // Fallback in-window hotkeys for testing in browser tabs

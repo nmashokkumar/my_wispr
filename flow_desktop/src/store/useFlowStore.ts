@@ -603,9 +603,9 @@ export const useFlowStore = create<FlowState>((set, get) => {
         const recording = await audioController.stop();
         console.log(`[Flow Store] Recording stopped: ${recording.blob.size} bytes, ${recording.durationMs}ms duration, simulated=${recording.simulated}`);
 
-        // If recording was less than 350ms or empty, dismiss cleanly without sending empty audio
-        if (recording.durationMs < 350 || recording.blob.size < 300) {
-          console.warn('[Flow Store] Dictation was too short (<350ms) or empty, resetting overlay to idle');
+        // If recording was less than 120ms or completely empty, reset overlay cleanly
+        if (recording.durationMs < 120 || recording.blob.size < 50) {
+          console.warn('[Flow Store] Dictation was too short (<120ms), resetting overlay to idle');
           set({ overlayState: 'idle', activeStage: 'record', overlayError: null });
           broadcastOverlay();
           return;
@@ -615,47 +615,72 @@ export const useFlowStore = create<FlowState>((set, get) => {
         const context = fresh.settings.activeContext;
         const style = fresh.stylesByContext[context] ?? 'formal';
 
-        const result = await transcribeAudio(
-          {
-            audio: recording.blob,
-            style,
-            context,
-            cleanup: fresh.cleanupConfig,
-            dictionary: fresh.dictionary,
-            language: 'en',
-          },
-          {
-            baseUrl: fresh.settings.serverUrl,
-            apiKey: fresh.settings.apiKey,
-            mockMode: fresh.settings.mockMode,
-          },
-          (stage) => {
-            set({ activeStage: stage });
-            broadcastOverlay();
-          }
-        );
+        let transcribedText = '';
+        let rawText = '';
+        let isServerTranscribed = false;
+
+        try {
+          const result = await transcribeAudio(
+            {
+              audio: recording.blob,
+              style,
+              context,
+              cleanup: fresh.cleanupConfig,
+              dictionary: fresh.dictionary,
+              language: 'en',
+            },
+            {
+              baseUrl: fresh.settings.serverUrl,
+              apiKey: fresh.settings.apiKey,
+              mockMode: fresh.settings.mockMode,
+              timeoutMs: 3500, // fast timeout so offline server doesn't freeze the flow
+            },
+            (stage) => {
+              set({ activeStage: stage });
+              broadcastOverlay();
+            }
+          );
+          transcribedText = result.text;
+          rawText = result.raw_text;
+          isServerTranscribed = true;
+        } catch (serverErr) {
+          console.warn('[Flow Store] ASR Server unavailable or offline. Preserving audio recording:', serverErr);
+          const durationSec = (recording.durationMs / 1000).toFixed(1);
+          transcribedText = `Voice recording (${durationSec}s)`;
+          rawText = transcribedText;
+        }
 
         const entry: HistoryEntry = {
           id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          text: result.text,
-          rawText: result.raw_text,
+          text: transcribedText,
+          rawText: rawText,
           audioBlob: recording.simulated ? null : recording.blob,
-          durationMs: recording.simulated ? result.duration_ms : recording.durationMs || result.duration_ms,
+          durationMs: recording.durationMs,
           timestamp: Date.now(),
           styleUsed: style,
           contextUsed: context,
           appTag: fresh.settings.activeAppTag || 'Notes',
           flagged: false,
-          fillerRemovedCount: result.fillerRemovedCount,
-          correctionsAppliedCount: result.correctionsAppliedCount,
-          language: result.language || 'en',
+          fillerRemovedCount: 0,
+          correctionsAppliedCount: 0,
+          language: 'en',
         };
 
         await saveHistoryEntry(entry);
 
-        // Copy to clipboard and insert via platform bridge (test input in browser)
-        await platform.copyToClipboard(entry.text);
-        const inserted = await platform.insertText(entry.text);
+        if (isServerTranscribed && transcribedText) {
+          await platform.copyToClipboard(entry.text);
+          const inserted = await platform.insertText(entry.text);
+          get().pushToast(
+            inserted ? 'Dictation inserted & copied to clipboard' : 'Dictation copied to clipboard',
+            'success'
+          );
+        } else {
+          get().pushToast(
+            `Voice recorded (${(recording.durationMs / 1000).toFixed(1)}s) • Saved to History`,
+            'default'
+          );
+        }
 
         set((s) => ({
           history: [entry, ...s.history],
@@ -672,17 +697,12 @@ export const useFlowStore = create<FlowState>((set, get) => {
         }));
         broadcastOverlay();
 
-        get().pushToast(
-          inserted ? 'Dictation inserted & copied to clipboard' : 'Dictation copied to clipboard',
-          'success'
-        );
-
         doneResetTimer = setTimeout(() => {
           if (get().overlayState === 'done') {
             set({ overlayState: 'idle' });
             broadcastOverlay();
           }
-        }, 1600);
+        }, 1400);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Transcription failed';
         set({ overlayState: 'error', overlayError: message });
@@ -693,7 +713,7 @@ export const useFlowStore = create<FlowState>((set, get) => {
             set({ overlayState: 'idle', overlayError: null });
             broadcastOverlay();
           }
-        }, 5500);
+        }, 4000);
       }
     },
 

@@ -1,5 +1,8 @@
 export interface ElectronAPI {
   isElectron: boolean;
+  onDictationStart: (callback: (data: { mode: 'push_to_talk' | 'hands_free' }) => void) => () => void;
+  onDictationStop: (callback: (data: { mode: 'push_to_talk' | 'hands_free' }) => void) => () => void;
+  onDictationToggle: (callback: (data: { mode: 'push_to_talk' | 'hands_free' }) => void) => () => void;
   onDictationTrigger: (callback: (data: { mode: 'push_to_talk' | 'hands_free' }) => void) => () => void;
   onOpenSettings: (callback: () => void) => () => void;
   updateHotkeys: (hotkeys: { pushToTalk: any; handsFree: any }) => Promise<{ success: boolean; pttAcc?: string; hfAcc?: string }>;
