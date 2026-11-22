@@ -287,6 +287,12 @@ function createTray() {
   });
 }
 
+function isEligibleAccelerator(acc) {
+  if (!acc || typeof acc !== 'string') return false;
+  if (/^(Control|Alt|Shift|Super|Meta)(Left|Right)?$/i.test(acc)) return false;
+  return true;
+}
+
 // Register global shortcuts
 async function registerShortcuts(pttBinding, hfBinding) {
   console.log('[Flow Daemon] Registering shortcuts:', { ptt: pttBinding, hf: hfBinding });
@@ -340,12 +346,13 @@ async function registerShortcuts(pttBinding, hfBinding) {
   }
 
   // 3. Setup Electron globalShortcut fallback
+  const eligibleHf = isEligibleAccelerator(hfAcc) ? hfAcc : 'Control+Alt+Space';
   try {
-    const hfOk = globalShortcut.register(hfAcc, () => {
-      console.log(`[Flow Daemon] Hands-Free hotkey triggered (globalShortcut): ${hfAcc}`);
+    const hfOk = globalShortcut.register(eligibleHf, () => {
+      console.log(`[Flow Daemon] Hands-Free hotkey triggered (globalShortcut): ${eligibleHf}`);
       handleDictationToggle('hands_free');
     });
-    if (hfOk) activeHfAccelerator = hfAcc;
+    if (hfOk) activeHfAccelerator = eligibleHf;
   } catch (err) {
     console.warn('[Flow Daemon] Error registering globalShortcut for HF:', err);
   }
@@ -353,19 +360,22 @@ async function registerShortcuts(pttBinding, hfBinding) {
   // 4. Setup GNOME media-keys (gsettings custom-keybinding)
   if (gnomeManager && GnomeShortcutManager.isGnome()) {
     try {
-      const gnomeHf = GnomeShortcutManager.convertToGnomeFormat(hfAcc);
-      if (gnomeHf) {
-        gnomeManager.registerSlot('hf', gnomeHf);
+      let gnomeHf = GnomeShortcutManager.convertToGnomeFormat(hfAcc);
+      if (!gnomeHf || !GnomeShortcutManager.isValidShortcut(gnomeHf)) {
+        gnomeHf = '<Control><Alt>space';
       }
+      gnomeManager.registerSlot('hf', gnomeHf);
     } catch (err) {
       console.warn('[Flow Daemon] Failed to register GNOME Hands-Free shortcut:', err);
     }
 
     try {
-      const gnomePtt = GnomeShortcutManager.convertToGnomeFormat(pttAcc);
-      if (gnomePtt) {
-        gnomeManager.registerSlot('ptt', gnomePtt);
+      let gnomePtt = GnomeShortcutManager.convertToGnomeFormat(pttAcc);
+      // GNOME does not support solo modifiers; provide a reliable combo fallback
+      if (!gnomePtt || !GnomeShortcutManager.isValidShortcut(gnomePtt)) {
+        gnomePtt = '<Control><Shift>space';
       }
+      gnomeManager.registerSlot('ptt', gnomePtt);
     } catch (err) {
       console.warn('[Flow Daemon] Failed to register GNOME PTT shortcut:', err);
     }
