@@ -71,8 +71,17 @@ export class AudioCaptureController {
     const constraints: MediaStreamConstraints = {
       audio:
         options.deviceId && options.deviceId !== 'default'
-          ? { deviceId: { exact: options.deviceId }, echoCancellation: true, noiseSuppression: true }
-          : { echoCancellation: true, noiseSuppression: true },
+          ? {
+              deviceId: { exact: options.deviceId },
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            }
+          : {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
     };
 
     try {
@@ -81,6 +90,10 @@ export class AudioCaptureController {
       }
 
       this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+      console.log(
+        '[AudioCapture] Microphone stream acquired:',
+        this.stream.getAudioTracks().map((t) => `${t.label} (${t.readyState})`).join(', ')
+      );
 
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
@@ -99,8 +112,11 @@ export class AudioCaptureController {
       };
 
       this.recorder.onstop = () => {
-        const durationMs = Math.max(400, Math.round(performance.now() - this.startedAt));
+        const durationMs = Math.max(200, Math.round(performance.now() - this.startedAt));
         const blob = new Blob(this.chunks, { type: mimeType || 'audio/webm' });
+        console.log(
+          `[AudioCapture] Recorder stopped: totalChunks=${this.chunks.length}, blobSize=${blob.size} bytes, duration=${durationMs}ms`
+        );
         const resolve = this.stopResolver;
         this.stopResolver = null;
         this.cleanup();

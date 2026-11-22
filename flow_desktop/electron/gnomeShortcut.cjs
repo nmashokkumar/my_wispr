@@ -66,11 +66,19 @@ const ELECTRON_TO_GNOME_KEY_MAP = {
   slash: 'slash',
   minus: 'minus',
   equal: 'equal',
+  controlright: 'Control_R',
+  controlleft: 'Control_L',
+  altright: 'Alt_R',
+  altleft: 'Alt_L',
+  superright: 'Super_R',
+  superleft: 'Super_L',
+  shiftright: 'Shift_R',
+  shiftleft: 'Shift_L',
 };
 
 // Valid pattern for GNOME shortcut format using X11 keysym names
 const VALID_SHORTCUT_PATTERN =
-  /^(<(Control|Alt|Shift|Super)>)*(F([1-9]|1[0-9]|2[0-4])|comma|period|slash|plus|minus|equal|semicolon|apostrophe|backslash|bracketleft|bracketright|asciitilde|exclam|at|numbersign|dollar|percent|asciicircum|ampersand|asterisk|parenleft|parenright|underscore|braceleft|braceright|bar|colon|quotedbl|less|greater|question|[a-z0-9]|space|Escape|Tab|BackSpace|grave|Pause|Scroll_Lock|Insert|Delete|Home|End|Page_Up|Page_Down|Up|Down|Left|Right|Return|Print)$/;
+  /^(<(Control|Alt|Shift|Super)>)*(F([1-9]|1[0-9]|2[0-4])|comma|period|slash|plus|minus|equal|semicolon|apostrophe|backslash|bracketleft|bracketright|asciitilde|exclam|at|numbersign|dollar|percent|asciicircum|ampersand|asterisk|parenleft|parenright|underscore|braceleft|braceright|bar|colon|quotedbl|less|greater|question|[a-z0-9]|space|Escape|Tab|BackSpace|grave|Pause|Scroll_Lock|Insert|Delete|Home|End|Page_Up|Page_Down|Up|Down|Left|Right|Return|Print|Control_R|Control_L|Alt_R|Alt_L|Super_R|Super_L|Shift_R|Shift_L)$/;
 
 function createHotkeyRepeatGate(windowMs = 500, now = Date.now) {
   let lastFireAt = -Infinity;
@@ -105,7 +113,8 @@ function bindingToAccelerator(binding) {
   else if (key === 'Fn' || key === 'WakeUp') {
     return parts.length > 0 ? [...parts, 'Space'].join('+') : 'Control+Space';
   } else if (/^(Control|Alt|Shift|Meta)(Left|Right)?$/.test(key)) {
-    return 'Control+Space';
+    if (parts.length > 0) return parts.join('+');
+    return key;
   }
 
   if (key && !parts.includes(key)) {

@@ -224,23 +224,12 @@ export class BrowserHotkeyProvider implements HotkeyProvider {
       }
     };
 
-    const handleWindowBlur = () => {
-      if (pttHeld) {
-        pttHeld = false;
-        if (config.isListening()) {
-          config.onStop();
-        }
-      }
-    };
-
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
-    window.addEventListener('blur', handleWindowBlur);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
-      window.removeEventListener('blur', handleWindowBlur);
     };
   }
 }

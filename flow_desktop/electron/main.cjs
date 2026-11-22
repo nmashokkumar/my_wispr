@@ -1,5 +1,5 @@
 const path = require('path');
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, clipboard } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, clipboard, session } = require('electron');
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const { GnomeShortcutManager, bindingToAccelerator } = require('./gnomeShortcut.cjs');
@@ -89,12 +89,14 @@ function getYdotoolSocket() {
   return null;
 }
 
-// Trigger dictation across overlay and main windows
+// Trigger dictation: routes primarily to overlayWindow, falling back to mainWindow if overlay unavailable
 function triggerDictation(mode = 'hands_free') {
   console.log(`[Flow Daemon] Dictation triggered globally: mode=${mode}`);
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.showInactive();
     overlayWindow.webContents.send('dictation-trigger', { mode });
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('dictation-trigger', { mode });
   }
 }
 
@@ -453,6 +455,20 @@ if (!gotTheLock) {
 
   app.whenReady().then(() => {
     console.log('[Flow Daemon] Wispr Flow background daemon initializing...');
+
+    // Explicitly grant microphone permissions to all windows
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+      if (permission === 'media') {
+        return callback(true);
+      }
+      callback(true);
+    });
+    session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+      if (permission === 'media') {
+        return true;
+      }
+      return true;
+    });
 
     setupIpcHandlers();
     createTray();

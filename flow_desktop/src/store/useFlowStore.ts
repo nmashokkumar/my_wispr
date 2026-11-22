@@ -550,10 +550,14 @@ export const useFlowStore = create<FlowState>((set, get) => {
       });
       broadcastOverlay();
 
+      // In push-to-talk, never auto-stop on silence: keep recording as long as the user holds the key!
+      // In hands-free, only auto-stop if explicitly configured to a high threshold (>=15s)
       const silenceTimeoutMs =
-        effectiveMode === 'hands_free' && state.settings.silenceTimeoutSec > 0
+        effectiveMode === 'hands_free' && state.settings.silenceTimeoutSec >= 15
           ? state.settings.silenceTimeoutSec * 1000
           : undefined;
+
+      console.log(`[Flow Store] Starting dictation: mode=${effectiveMode}, micDeviceId=${state.settings.micDeviceId}`);
 
       try {
         await audioController.start({
@@ -567,6 +571,7 @@ export const useFlowStore = create<FlowState>((set, get) => {
             },
             onSilenceTimeout: () => {
               if (get().overlayState === 'listening') {
+                console.log('[Flow Store] Silence timeout auto-stopping dictation');
                 void get().stopDictation();
               }
             },
@@ -574,6 +579,7 @@ export const useFlowStore = create<FlowState>((set, get) => {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Microphone unavailable';
+        console.error('[Flow Store] Failed to start microphone:', message);
         set({ overlayState: 'error', overlayError: message });
         broadcastOverlay();
         get().pushToast(message, 'error');
@@ -595,6 +601,16 @@ export const useFlowStore = create<FlowState>((set, get) => {
 
       try {
         const recording = await audioController.stop();
+        console.log(`[Flow Store] Recording stopped: ${recording.blob.size} bytes, ${recording.durationMs}ms duration, simulated=${recording.simulated}`);
+
+        // If recording was less than 350ms or empty, dismiss cleanly without sending empty audio
+        if (recording.durationMs < 350 || recording.blob.size < 300) {
+          console.warn('[Flow Store] Dictation was too short (<350ms) or empty, resetting overlay to idle');
+          set({ overlayState: 'idle', activeStage: 'record', overlayError: null });
+          broadcastOverlay();
+          return;
+        }
+
         const fresh = get();
         const context = fresh.settings.activeContext;
         const style = fresh.stylesByContext[context] ?? 'formal';
