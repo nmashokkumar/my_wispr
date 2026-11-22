@@ -23,49 +23,33 @@ let linuxKeyManager = null;
 let activePttAccelerator = null;
 let activeHfAccelerator = null;
 
-// Robust content loader: connects to Vite dev server if active, with instant fallback to production bundle
+// Robust content loader: directly loads built bundle, with instant dev server fallback if requested
 async function loadWindowContent(win, hash = '') {
+  if (!win || win.isDestroyed()) return;
   const distIndex = path.join(__dirname, '..', 'dist', 'index.html');
   const targetHash = hash ? (hash.startsWith('/') ? hash.slice(1) : hash) : '';
-  const devUrl = `http://127.0.0.1:3000${targetHash ? '#/' + targetHash : ''}`;
 
-  // Check if local Vite dev server is responding
-  let isDevRunning = false;
-  try {
-    const http = require('http');
-    isDevRunning = await new Promise((resolve) => {
-      const req = http.get('http://127.0.0.1:3000', { timeout: 800 }, (res) => {
-        resolve(res.statusCode >= 200 && res.statusCode < 400);
-      });
-      req.on('error', () => resolve(false));
-      req.on('timeout', () => {
-        req.destroy();
-        resolve(false);
-      });
-    });
-  } catch {
-    isDevRunning = false;
-  }
-
-  if (isDevRunning) {
-    console.log(`[Flow Daemon] Connecting window to Vite dev server: ${devUrl}`);
-    try {
-      await win.loadURL(devUrl);
-      return;
-    } catch (err) {
-      console.warn(`[Flow Daemon] Failed to load Vite dev URL (${err.message}), falling back to built bundle.`);
-    }
-  }
-
-  // Load production bundle directly via file://
-  if (fs.existsSync(distIndex)) {
+  // 1. Direct local file loading for fast, offline, crash-proof native execution
+  if (fs.existsSync(distIndex) && process.env.VITE_DEV !== 'true') {
     console.log(`[Flow Daemon] Loading local bundle: ${distIndex}${targetHash ? ' hash=/' + targetHash : ''}`);
     const loadOptions = targetHash
       ? { hash: '/' + targetHash, query: { overlay: 'true' } }
       : {};
-    await win.loadFile(distIndex, loadOptions);
-  } else {
-    console.error(`[Flow Daemon] ERROR: Neither Vite dev server nor built bundle (${distIndex}) is available.`);
+    try {
+      await win.loadFile(distIndex, loadOptions);
+      return;
+    } catch (err) {
+      console.warn(`[Flow Daemon] Failed to load local bundle (${err.message}), trying dev server fallback.`);
+    }
+  }
+
+  // 2. Fallback to Vite dev server on port 3000 if dist missing or VITE_DEV=true
+  const devUrl = `http://127.0.0.1:3000${targetHash ? '#/' + targetHash : ''}`;
+  console.log(`[Flow Daemon] Connecting window to Vite dev server: ${devUrl}`);
+  try {
+    await win.loadURL(devUrl);
+  } catch (err) {
+    console.error(`[Flow Daemon] ERROR loading window content: ${err.message}`);
   }
 }
 
@@ -89,23 +73,36 @@ function getYdotoolSocket() {
   return null;
 }
 
+function safeSend(win, channel, payload) {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    if (win.webContents && !win.webContents.isCrashed()) {
+      win.webContents.send(channel, payload);
+      return true;
+    }
+  } catch (err) {
+    console.warn(`[Flow Daemon] Failed to send ${channel}:`, err.message);
+  }
+  return false;
+}
+
 // Dictation lifecycle triggers
 function handleDictationStart(mode = 'push_to_talk') {
   console.log(`[Flow Daemon] Dictation START: mode=${mode}`);
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.showInactive();
-    overlayWindow.webContents.send('dictation-start', { mode });
+    safeSend(overlayWindow, 'dictation-start', { mode });
   } else if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('dictation-start', { mode });
+    safeSend(mainWindow, 'dictation-start', { mode });
   }
 }
 
 function handleDictationStop(mode = 'push_to_talk') {
   console.log(`[Flow Daemon] Dictation STOP: mode=${mode}`);
   if (overlayWindow && !overlayWindow.isDestroyed()) {
-    overlayWindow.webContents.send('dictation-stop', { mode });
+    safeSend(overlayWindow, 'dictation-stop', { mode });
   } else if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('dictation-stop', { mode });
+    safeSend(mainWindow, 'dictation-stop', { mode });
   }
 }
 
@@ -113,9 +110,9 @@ function handleDictationToggle(mode = 'hands_free') {
   console.log(`[Flow Daemon] Dictation TOGGLE: mode=${mode}`);
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.showInactive();
-    overlayWindow.webContents.send('dictation-toggle', { mode });
+    safeSend(overlayWindow, 'dictation-toggle', { mode });
   } else if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('dictation-toggle', { mode });
+    safeSend(mainWindow, 'dictation-toggle', { mode });
   }
 }
 
@@ -142,7 +139,8 @@ function createMainWindow() {
     minWidth: 780,
     minHeight: 560,
     title: 'Wispr Flow',
-    backgroundColor: '#0F0F11',
+    backgroundColor: '#121211',
+    autoHideMenuBar: true,
     show: false, // Starts minimized to tray by default
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -156,14 +154,18 @@ function createMainWindow() {
   mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     console.log(`[MainWindow Console] [${level}] ${message} (${sourceId}:${line})`);
   });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.warn(`[MainWindow] Render process gone (${details.reason}), reloading...`);
+    loadWindowContent(mainWindow);
+  });
+
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`[MainWindow Load Error] ${errorCode} (${errorDescription}) on ${validatedURL}`);
-    if (validatedURL && (validatedURL.includes('127.0.0.1:3000') || validatedURL.includes('localhost:3000'))) {
-      const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
-      if (fs.existsSync(indexPath)) {
-        console.log('[MainWindow] Falling back to local built bundle:', indexPath);
-        mainWindow.loadFile(indexPath);
-      }
+    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
+    if (fs.existsSync(indexPath)) {
+      console.log('[MainWindow] Falling back to local built bundle:', indexPath);
+      mainWindow.loadFile(indexPath);
     }
   });
 
@@ -216,14 +218,18 @@ function createOverlayWindow() {
   overlayWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     console.log(`[Overlay Console] [${level}] ${message} (${sourceId}:${line})`);
   });
+
+  overlayWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.warn(`[OverlayWindow] Render process gone (${details.reason}), restoring overlay...`);
+    loadWindowContent(overlayWindow, 'overlay');
+  });
+
   overlayWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`[Overlay Load Error] ${errorCode} (${errorDescription}) on ${validatedURL}`);
-    if (validatedURL && (validatedURL.includes('127.0.0.1:3000') || validatedURL.includes('localhost:3000'))) {
-      const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
-      if (fs.existsSync(indexPath)) {
-        console.log('[Overlay] Falling back to local built bundle:', indexPath);
-        overlayWindow.loadFile(indexPath, { hash: '/overlay' });
-      }
+    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
+    if (fs.existsSync(indexPath)) {
+      console.log('[Overlay] Falling back to local built bundle:', indexPath);
+      overlayWindow.loadFile(indexPath, { hash: '/overlay' });
     }
   });
 
@@ -355,6 +361,28 @@ async function registerShortcuts(pttBinding, hfBinding) {
     if (hfOk) activeHfAccelerator = eligibleHf;
   } catch (err) {
     console.warn('[Flow Daemon] Error registering globalShortcut for HF:', err);
+  }
+
+  // Also ensure Control+Alt+Space is registered as an immutable fallback
+  if (eligibleHf !== 'Control+Alt+Space') {
+    try {
+      globalShortcut.register('Control+Alt+Space', () => {
+        console.log('[Flow Daemon] Hands-Free default triggered (globalShortcut): Control+Alt+Space');
+        handleDictationToggle('hands_free');
+      });
+    } catch {}
+  }
+
+  // Also register Push-to-Talk via globalShortcut if valid accelerator
+  const eligiblePtt = isEligibleAccelerator(pttAcc) ? pttAcc : 'Control+Shift+Space';
+  try {
+    const pttOk = globalShortcut.register(eligiblePtt, () => {
+      console.log(`[Flow Daemon] Push-to-Talk triggered (globalShortcut): ${eligiblePtt}`);
+      handleDictationToggle('push_to_talk');
+    });
+    if (pttOk) activePttAccelerator = eligiblePtt;
+  } catch (err) {
+    console.warn('[Flow Daemon] Error registering globalShortcut for PTT:', err);
   }
 
   // 4. Setup GNOME media-keys (gsettings custom-keybinding)
@@ -513,6 +541,9 @@ if (!gotTheLock) {
       }
       return true;
     });
+
+    // Strip default dev menu bar completely for a native frameless look
+    Menu.setApplicationMenu(null);
 
     setupIpcHandlers();
     createTray();
