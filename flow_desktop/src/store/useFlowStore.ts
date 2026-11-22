@@ -42,6 +42,18 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   activeContext: 'work',
   activeAppTag: 'Terminal',
+
+  // Speech to Text configuration
+  sttProvider: 'flow_server',
+  sttEndpointUrl: 'http://localhost:8000',
+  sttApiKey: '',
+
+  // Language Model (AI text cleanup & polish)
+  enableAiCleanup: true,
+  llmProvider: 'self_hosted',
+  llmEndpointUrl: 'http://192.168.1.126:11434/v1',
+  llmApiKey: '',
+  llmModel: 'llama3',
 };
 
 const DEFAULT_STYLES: Record<StyleContext, StylePreset> = {
@@ -620,6 +632,15 @@ export const useFlowStore = create<FlowState>((set, get) => {
         let isServerTranscribed = false;
 
         try {
+          const sttBaseUrl =
+            fresh.settings.sttProvider === 'self_hosted'
+              ? fresh.settings.sttEndpointUrl
+              : fresh.settings.serverUrl || 'http://localhost:8000';
+          const sttApiKey =
+            fresh.settings.sttProvider === 'self_hosted'
+              ? fresh.settings.sttApiKey
+              : fresh.settings.apiKey;
+
           const result = await transcribeAudio(
             {
               audio: recording.blob,
@@ -630,10 +651,14 @@ export const useFlowStore = create<FlowState>((set, get) => {
               language: 'en',
             },
             {
-              baseUrl: fresh.settings.serverUrl,
-              apiKey: fresh.settings.apiKey,
-              mockMode: fresh.settings.mockMode,
-              timeoutMs: 3500, // fast timeout so offline server doesn't freeze the flow
+              baseUrl: sttBaseUrl,
+              apiKey: sttApiKey,
+              mockMode: fresh.settings.mockMode || fresh.settings.sttProvider === 'mock',
+              timeoutMs: 6000,
+              enableAiCleanup: fresh.settings.enableAiCleanup,
+              llmEndpointUrl: fresh.settings.llmEndpointUrl,
+              llmApiKey: fresh.settings.llmApiKey,
+              llmModel: fresh.settings.llmModel,
             },
             (stage) => {
               set({ activeStage: stage });

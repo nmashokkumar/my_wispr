@@ -54,6 +54,9 @@ export interface HotkeyBinding {
   label: string;
 }
 
+export type LlmProvider = 'cloud' | 'byok' | 'local' | 'self_hosted' | 'enterprise';
+export type SttProvider = 'flow_server' | 'self_hosted' | 'mock';
+
 export interface AppSettings {
   serverUrl: string;
   apiKey: string;
@@ -66,6 +69,18 @@ export interface AppSettings {
   theme: 'light' | 'dark';
   activeContext: StyleContext;
   activeAppTag: string;
+
+  // Speech to Text configuration
+  sttProvider: SttProvider;
+  sttEndpointUrl: string;
+  sttApiKey?: string;
+
+  // Language Model (AI text cleanup & polish)
+  enableAiCleanup: boolean;
+  llmProvider: LlmProvider;
+  llmEndpointUrl: string;
+  llmApiKey?: string;
+  llmModel?: string;
 }
 
 export interface TranscribeResponse {

@@ -21,6 +21,10 @@ export interface ApiClientConfig {
   apiKey?: string;
   mockMode: boolean;
   timeoutMs?: number;
+  enableAiCleanup?: boolean;
+  llmEndpointUrl?: string;
+  llmApiKey?: string;
+  llmModel?: string;
 }
 
 export interface ProcessedTranscribeResult extends TranscribeResponse {
@@ -42,7 +46,7 @@ function normalizeBaseUrl(url: string): string {
 }
 
 /**
- * Checks backend availability via GET {baseUrl}/health.
+ * Checks backend availability via GET {baseUrl}/health or {baseUrl}/models.
  */
 export async function checkServerHealth(config: ApiClientConfig): Promise<{
   ok: boolean;
@@ -56,7 +60,7 @@ export async function checkServerHealth(config: ApiClientConfig): Promise<{
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 6000);
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 5000);
 
   try {
     const headers: Record<string, string> = {};
@@ -65,18 +69,27 @@ export async function checkServerHealth(config: ApiClientConfig): Promise<{
       headers['Authorization'] = `Bearer ${config.apiKey.trim()}`;
     }
 
-    const res = await fetch(`${baseUrl}/health`, {
+    // Try /health first, then /models (for Ollama, vLLM, or OpenAI-compatible endpoints)
+    let res: Response | null = await fetch(`${baseUrl}/health`, {
       method: 'GET',
       headers,
       signal: controller.signal,
-    });
+    }).catch(() => null);
+
+    if (!res || !res.ok) {
+      res = await fetch(`${baseUrl}/models`, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      }).catch(() => null);
+    }
 
     const latencyMs = Math.round(performance.now() - started);
-    if (!res.ok) {
+    if (!res || !res.ok) {
       return {
         ok: false,
         latencyMs,
-        message: `Server returned HTTP ${res.status} (${res.statusText || 'Error'}).`,
+        message: `Could not reach ${baseUrl}. Verify the server is running.`,
       };
     }
 
@@ -87,17 +100,10 @@ export async function checkServerHealth(config: ApiClientConfig): Promise<{
     };
   } catch (err) {
     const latencyMs = Math.round(performance.now() - started);
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      return {
-        ok: false,
-        latencyMs,
-        message: `Connection timed out after ${Math.round((config.timeoutMs ?? 6000) / 1000)}s.`,
-      };
-    }
     return {
       ok: false,
       latencyMs,
-      message: `Could not reach ${baseUrl}. Verify the server is running and CORS is enabled.`,
+      message: `Connection error: ${err instanceof Error ? err.message : 'Unreachable'}`,
     };
   } finally {
     clearTimeout(timeout);
@@ -105,9 +111,74 @@ export async function checkServerHealth(config: ApiClientConfig): Promise<{
 }
 
 /**
- * Sends audio + dictation settings to POST {baseUrl}/transcribe as multipart/form-data.
- * Supports Mock mode (1s simulated pipeline) and applies local cleanup/dictionary/style
- * rules as a fallback whenever the server returns unpolished raw text.
+ * Calls OpenAI-compatible /chat/completions endpoint (e.g. Ollama, LM Studio, vLLM)
+ * for AI dictation cleanup, grammar correction, and smart punctuation.
+ */
+export async function applyAiCleanup(
+  rawText: string,
+  config: { endpointUrl: string; apiKey?: string; model?: string; timeoutMs?: number }
+): Promise<string | null> {
+  if (!rawText || !rawText.trim() || !config.endpointUrl) return null;
+  const baseUrl = normalizeBaseUrl(config.endpointUrl);
+  const endpoint = baseUrl.endsWith('/chat/completions')
+    ? baseUrl
+    : `${baseUrl}/chat/completions`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 6000);
+
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (config.apiKey?.trim()) {
+      headers['Authorization'] = `Bearer ${config.apiKey.trim()}`;
+    }
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: config.model?.trim() || 'llama3',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are an expert AI dictation editor. Clean up the spoken dictation: remove verbal filler words (um, uh, like, you know), resolve speech self-corrections, fix punctuation and capitalization, and preserve the speaker\'s original intent and tone. Respond with ONLY the refined text, without quotes, notes, or markdown fences.',
+          },
+          {
+            role: 'user',
+            content: rawText,
+          },
+        ],
+        temperature: 0.1,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      console.warn(`[AI Cleanup] LLM endpoint returned HTTP ${res.status}`);
+      return null;
+    }
+
+    const data = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (content && typeof content === 'string' && content.trim()) {
+      return content.trim();
+    }
+    return null;
+  } catch (err) {
+    console.warn('[AI Cleanup] LLM endpoint error, falling back to local pipeline:', err);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Sends audio + dictation settings to ASR server as multipart/form-data.
+ * Supports Wispr Flow private server, standard OpenAI /audio/transcriptions,
+ * and AI Language Model post-cleanup (e.g. Ollama at http://192.168.1.126:11434/v1).
  */
 export async function transcribeAudio(
   payload: TranscribeRequestPayload,
@@ -123,6 +194,8 @@ export async function transcribeAudio(
 
   const formData = new FormData();
   formData.append('audio', payload.audio, 'dictation.webm');
+  formData.append('file', payload.audio, 'dictation.webm'); // for standard OpenAI format
+  formData.append('model', 'whisper-1');
   formData.append('style', payload.style);
   formData.append('context', payload.context);
   formData.append('cleanup', JSON.stringify(payload.cleanup));
@@ -150,28 +223,55 @@ export async function transcribeAudio(
 
   try {
     onStageChange?.('transcribe');
-    const response = await fetch(`${baseUrl}/transcribe`, {
+    // Determine whether to use /transcribe or standard /audio/transcriptions
+    const sttUrl = baseUrl.endsWith('/v1') || baseUrl.includes('/audio/transcriptions')
+      ? (baseUrl.endsWith('/audio/transcriptions') ? baseUrl : `${baseUrl}/audio/transcriptions`)
+      : `${baseUrl}/transcribe`;
+
+    let response = await fetch(sttUrl, {
       method: 'POST',
       headers,
       body: formData,
       signal: controller.signal,
-    });
+    }).catch(() => null);
 
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => '');
+    // If /transcribe failed on custom server, fallback to /v1/audio/transcriptions
+    if ((!response || !response.ok) && !sttUrl.includes('/audio/transcriptions')) {
+      response = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
+        method: 'POST',
+        headers,
+        body: formData,
+        signal: controller.signal,
+      }).catch(() => response);
+    }
+
+    if (!response || !response.ok) {
+      const errorBody = response ? await response.text().catch(() => '') : '';
       throw new Error(
-        `Transcription server error (${response.status}): ${errorBody.slice(0, 120) || response.statusText}`
+        `Transcription server error (${response?.status || 'network'}): ${errorBody.slice(0, 120) || response?.statusText || 'Could not connect'}`
       );
     }
 
     onStageChange?.('cleanup');
     const data = (await response.json()) as Partial<TranscribeResponse>;
     const rawText = (data.raw_text ?? data.text ?? '').trim();
-    const serverText = (data.text ?? '').trim();
+    let serverText = (data.text ?? '').trim();
+
+    // 2. AI Language Model cleanup (e.g. Ollama http://192.168.1.126:11434/v1)
+    if (config.enableAiCleanup && config.llmEndpointUrl) {
+      const aiCleaned = await applyAiCleanup(rawText || serverText, {
+        endpointUrl: config.llmEndpointUrl,
+        apiKey: config.llmApiKey,
+        model: config.llmModel,
+      });
+      if (aiCleaned) {
+        serverText = aiCleaned;
+      }
+    }
 
     onStageChange?.('polish');
 
-    // If the server only returned raw text (or identical uncleaned text), apply local fallback rules.
+    // If no server/AI cleanup occurred, apply local fallback rules
     const needsLocalFallback = !serverText || serverText === rawText;
     const localTransform = applyLocalCleanupPipeline(needsLocalFallback ? rawText : serverText, {
       style: payload.style,
