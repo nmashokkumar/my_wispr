@@ -1,0 +1,6 @@
+{
+  "name": "Flow — Desktop Voice Dictation",
+  "description": "Local-first desktop voice dictation studio with live audio waveform overlay, smart cleanup, personal dictionary, style presets, and local history analytics.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

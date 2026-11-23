@@ -4,16 +4,16 @@
   "description": "Wispr Flow for Linux - Clean, Private Dictation Client with Self-Hosted Server",
   "scripts": {
     "start": "./start_local.sh",
-    "dev": "cd flow_desktop && npm run dev",
+    "dev": "cd my_wispr && npm run dev",
     "server": "./start_server.sh",
-    "build": "cd flow_desktop && npm run build"
+    "build": "cd my_wispr && npm run build"
   },
   "keywords": [
     "wisprflow",
     "speech-to-text",
     "dictation",
     "linux",
-    "flow-desktop"
+    "my-wispr"
   ],
   "author": "Antigravity",
   "license": "MIT"

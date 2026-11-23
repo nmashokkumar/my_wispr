@@ -1,6 +1,8 @@
 # Dependencies
 node_modules
 node_modules/
+my_wispr/node_modules
+my_wispr/node_modules/
 flow_desktop/node_modules
 flow_desktop/node_modules/
 
@@ -17,10 +19,13 @@ openwhispr_ref/
 Handy-main/
 
 # Build Outputs & Bundles
+my_wispr/dist/
 flow_desktop/dist/
 dist/
 build/
 .aistudio/
+*.zip
+wisprflow_full_codebase.*
 
 # Runtime Logs & Temporary Files
 server.log

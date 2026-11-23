@@ -56,7 +56,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # 2. Ensure frontend bundle is built & start Vite dev server
-cd "$PROJECT_ROOT/flow_desktop"
+cd "$PROJECT_ROOT/my_wispr"
 if [ ! -d "dist" ] || [ ! -f "dist/index.html" ]; then
     echo "[2/3] Building local frontend bundle..."
     npm run build
@@ -83,5 +83,5 @@ fi
 
 # 3. Launch Electron Background Daemon & Floating Overlay Pill
 echo "[3/3] Launching Wispr Flow Background Daemon & Tray..."
-cd "$PROJECT_ROOT/flow_desktop"
+cd "$PROJECT_ROOT/my_wispr"
 ./node_modules/.bin/electron --no-sandbox electron/main.cjs

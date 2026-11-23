@@ -8,8 +8,8 @@ echo "      RUNNING WISPR FLOW COMPREHENSIVE TEST SUITE     "
 echo "======================================================"
 
 echo ""
-echo "[1/2] Flow Desktop Client (Text Pipeline, Hotkeys & Electron Daemon)"
-cd flow_desktop
+echo "[1/2] My Wispr Client (Text Pipeline, Hotkeys, PCM Streaming & Electron Daemon)"
+cd my_wispr
 npm test
 cd ..
 
