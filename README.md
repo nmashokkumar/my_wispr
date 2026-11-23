@@ -1,68 +1,66 @@
-# Wispr Flow (Flow Desktop + Private Cloud Server)
+# My Wispr (Wispr Flow Voice Dictation Daemon & Client)
 
-A clean, high-performance voice-dictation application reverse-engineered from the official Wispr Flow design and reconstructed with React 19, TypeScript, Tailwind CSS, Vite, and FastAPI.
+A clean, high-performance voice-dictation desktop application reverse-engineered from Wispr Flow and reconstructed with React 19, TypeScript, Tailwind CSS, Vite, Electron, and a live high-throughput dedicated cloud backend.
 
 ---
 
-## Architecture Overview
+## 🚀 Live Backend & Connection Settings
+The client connects directly to our verified, dedicated cloud backend server:
+
+* **Base URL**: `https://8000-agq75oq6i7eazd5pahfhehvvj4.instabox.tech`
+* **Real-Time Audio WebSocket**: `wss://8000-agq75oq6i7eazd5pahfhehvvj4.instabox.tech/api/v1/meetings/transcribe`
+* **Health Check**: `GET https://8000-agq75oq6i7eazd5pahfhehvvj4.instabox.tech/health`
+* **Batch / Re-transcribe**: `POST https://8000-agq75oq6i7eazd5pahfhehvvj4.instabox.tech/transcribe`
+* **Architecture**: Cloud VM running Layer 1 NVIDIA Parakeet 0.6B INT8 ASR + Layer 2 native C++ Qwen 2.5 3B Q4_K_M cleanup.
+* **Option A Streaming**: Real-time intermediate clause updates (~400ms pause streaming) via Silero VAD.
+* **Audio Retention**: Stateless server; 100% client-side IndexedDB (`flow-dictation-db`).
+* **Alternative Self-Hosted LLM**: Direct support for pointing to an OpenAI-compatible local/LAN server (e.g. `http://192.168.1.126:11434/v1` for Ollama/LM Studio) inside the Settings modal.
+
+---
+
+## 📁 Repository Structure
 
 ```
-wisprflow/
-├── flow_desktop/             # Frontend UI (Generated from Google AI Studio & reference media)
-│   ├── public/assets/        # Official audio sounds (dictation-start, paste) & icons
-│   ├── src/components/       # OverlayPill (Hold vs Hands-free), Sidebar, SettingsModal
-│   ├── src/pages/            # DictationPage, DictionaryPage, StylePage, InsightsPage, OverlayRoute
-│   ├── src/services/         # API client, audio recorder, hotkey provider, IndexedDB store
-│   └── src/utils/            # Text cleanup pipeline (filler words, self-correction, presets)
-│
-├── server/                   # Private Self-Hosted ASR Backend (Port 8000)
-│   ├── Dockerfile            # Container deployment (x86_64 & ARM64 Ampere)
-│   ├── docker-compose.yml
-│   └── src/                  # FastAPI endpoints (/health, /transcribe, /v1/audio/transcriptions)
-│
-├── start_local.sh            # One-command launcher (Starts Backend Server + Flow Desktop UI)
-├── start_client.sh           # Standalone Flow Desktop UI launcher
-├── start_server.sh           # Standalone Server launcher
+my_wispr/
+├── backend_communication_contract.md   # Complete API & WebSocket schema contract
+├── backend_architecture_for_ai_studio.md # System architecture documentation
+├── my_wispr/                           # Desktop client & Electron background daemon
+│   ├── electron/                       # Native daemon (main.cjs, tray, shortcuts)
+│   ├── public/assets/                  # Sound chimes & tray icons
+│   ├── resources/bin/                  # Native Linux evdev key listeners
+│   ├── src/components/                 # OverlayPill, SettingsModal, Sidebar, Toast
+│   ├── src/pages/                      # DictationPage, DictionaryPage, InsightsPage, OverlayRoute
+│   ├── src/services/                   # WebSocket client (api.ts), audio capture, hotkeys, platform
+│   ├── src/store/                      # Zustand useFlowStore
+│   ├── src/types/                      # AppSettings & WebSocket type definitions
+│   └── tests/                          # Automated daemon & lifecycle integration tests
+├── server/                             # Standalone Python ASR & Layer 2 refiner
+├── start_client.sh                     # Launch desktop client daemon & tray
+├── start_local.sh                      # Launch local development stack
+├── run_tests.sh                        # Run full test suite across all 46 test cases
 └── package.json
 ```
 
 ---
 
-## Quick Start & Usage
+## 🎙️ Global Hotkeys & Linux Smart Paste
 
-### 🚀 1. One-Command Launch (Backend Server + Flow Desktop)
-From the project root:
+* **Hands-Free Dictation**: `Ctrl + Alt + Space` (tap once to start recording, speak freely, tap again or `Esc` to finish and paste).
+* **Push-to-Talk (PTT)**: `fn` / `Right Ctrl` (hold to speak, release to finish and paste).
+* **Linux Smart Paste**: Text is written to clipboard + primary selection and injected into whichever external window is focused using `ydotool` (`Shift + Insert` keycodes `42:1 110:1 110:0 42:0`) via `/run/user/1000/.ydotool_socket`.
+
+---
+
+## 🧪 Testing
+
+To run the full suite of unit and integration tests:
+
 ```bash
-./start_local.sh
+./run_tests.sh
 ```
-*(or run `npm start`)*
 
-This script:
-1. Boots the private speech-to-text backend on `http://127.0.0.1:8000`.
-2. Verifies health status via `GET /health`.
-3. Launches **Flow Desktop** on `http://localhost:3000`.
-
----
-
-### 🎙️ 2. Core Dictation Modes
-Flow Desktop provides dual-mode dictation:
-1. **Push-to-Talk (Hold Mode)**: Hold down the configured hotkey while speaking. Releasing it stops recording, cleans up filler words, and delivers formatted text.
-2. **Hands-Free Mode (Toggle Mode)**: Tap the hotkey once to start recording; speak freely; tap again to finalize and transcribe.
-
----
-
-### 🗂️ 3. Features Included
-- **4-Stage Live Transcription Pipeline**: Real-time visual progress through **Record ➔ Transcribe ➔ Clean up ➔ Polish**.
-- **Audio Waveform Visualizer**: Smooth dynamic bars responding to microphone RMS levels.
-- **Custom Dictionary**: Add trigger phrases and custom spellings/replacements.
-- **Style Presets**: Formal, Casual, and Very Casual tones.
-- **Insights & History**: Local storage of speech history with word count analytics.
-
----
-
-### 🧪 4. Running Unit Tests
-To run unit tests for the text pipeline and hotkeys:
-```bash
-cd flow_desktop && npm test
-```
-*(All 10 tests pass in <1 second)*
+All 46 tests pass across 6 test suites covering:
+* PCM audio downsampling to 16 kHz Int16 and 1,024-byte packetization
+* Wispr Flow text pipeline (filler-word removal, self-corrections, dictionary replacements)
+* Dual hotkey lifecycle matching (`Ctrl + Alt + Space` and `fn`)
+* Electron daemon, tray initialization, and smart paste injection
